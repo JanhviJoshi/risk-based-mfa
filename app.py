@@ -1,3 +1,4 @@
+import os
 import json, sqlite3
 import requests
 
@@ -5,6 +6,7 @@ from flask import Flask, render_template, request, redirect, url_for, session
 from twilio.rest import Client
 
 from user import User
+from twilio_credentials import TWILIO_AUTH_TOKEN, TWILIO_ACCOUNT_SID
 
 
 app = Flask(__name__)
@@ -140,10 +142,8 @@ def request_otp(phone_number):
 
 def send_otp(phone_number, otp_code):
     print("inside send_otp")
-    # Account SID from twilio.com/console
-    account_sid = "AC77b15cf1822da6e5c0660becf471596f"
-    # Auth Token from twilio.com/console
-    auth_token = "6b7918218ea221baaed9d9e6d5d27308"
+    account_sid = TWILIO_ACCOUNT_SID  # from own twilio_credentials.py
+    auth_token = TWILIO_AUTH_TOKEN  # from own twilio_credentials.py
     client = Client(account_sid, auth_token)
 
     try:
