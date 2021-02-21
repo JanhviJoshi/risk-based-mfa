@@ -1,4 +1,3 @@
-import os
 import json, sqlite3
 import requests
 
@@ -53,7 +52,20 @@ def home():
             connection.commit()
             connection.close()
 
-            return redirect(url_for('success'))
+            # ---- checking for safe zone -----
+            if safe_zone():
+                return redirect(url_for('success'))
+
+            # ---- not in safe zone ----
+            # ---- OTP verification ----
+            otp_code = request_otp(user.phone_number)  # requesting for generation of otp from third party api
+            msg = send_otp(user.phone_number, otp_code)  # sending otp to given number via message
+            if msg:  # invalid phone number
+                # error = msg
+                return render_template('register.html', info="Invalid Phone Number. Please enter valid phone number.")
+            # valid number
+            return redirect(url_for('validate', phone_number=user.phone_number))
+
         else:  # wrong password
             return render_template('login.html', info="ERROR: Wrong Password. Please try again")
     else:  # user not registered
@@ -103,7 +115,6 @@ def show_register_page():
         otp_code = request_otp(phone_number)  # requesting for generation of otp from third party api
         msg = send_otp(phone_number, otp_code)  # sending otp to given number via message
         if msg:  # invalid phone number
-            # error = msg
             return render_template('register.html', info="Invalid Phone Number. Please enter valid phone number.")
         # valid number
         return redirect(url_for('validate'))
@@ -112,7 +123,7 @@ def show_register_page():
 @app.route("/validate", methods=['GET', 'POST'])
 def validate():
     if request.method == "GET":
-        return render_template('validate.html')
+        return render_template('validate.html', phone_number=session['phone_number'])
 
     input_otp = request.form['otp_code']
     phone_number = session['phone_number']
@@ -122,7 +133,7 @@ def validate():
         save_to_db()
         return redirect(url_for('success'))
     info = "Invalid OTP. Please try again."
-    return render_template('validate.html', info=info)  # redirects to the same url u r in
+    return render_template('validate.html', info=info, phone_number=session['phone_number'])  # redirects to the same url u r in
 
 
 @app.route("/success")
@@ -195,6 +206,10 @@ def save_to_db():
     connection.close()
 
     return redirect(url_for('success'))
+
+
+def safe_zone():
+    return True
 
 
 app.run(port=5000, debug=True)
