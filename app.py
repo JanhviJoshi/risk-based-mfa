@@ -20,7 +20,12 @@ def home():
         return render_template("login.html")  # showing the login page
 
     # fetching location of user
-    location_data = get_user_location_data()
+    raw_data = request.cookies.get('locationData')
+    try:
+        location_data = json.loads(raw_data)
+    except:
+        return render_template("login.html", info="Location access denied. Please enable location to continue...")
+
     latitude = location_data['latitude']
     longitude = location_data['longitude']
     time = location_data['time']
@@ -60,8 +65,13 @@ def show_register_page():
     if request.method == "GET":
         return render_template("register.html")
 
-    # ----- fetching location user -----
-    location_data = get_user_location_data()
+    # ----- fetching location of user -----
+    raw_data = request.cookies.get('locationData')
+    try:
+        location_data = json.loads(raw_data)
+    except:
+        return render_template("register.html", info="Location access denied. Please enable location to continue...")
+
     latitude = location_data['latitude']
     longitude = location_data['longitude']
     time = location_data['time']
@@ -118,16 +128,6 @@ def validate():
 @app.route("/success")
 def success():  # opens the home page on success of entry
     return render_template('success.html')
-
-
-def get_user_location_data():
-    raw_data = request.cookies.get("locationData")
-    try:
-        location_data = json.loads(raw_data)
-    except:
-        return render_template("login.html", info="Location access denied. Please enable location to continue...")
-
-    return location_data
 
 
 def request_otp(phone_number):
