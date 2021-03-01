@@ -4,13 +4,22 @@ import requests
 from flask import Flask, render_template, request, redirect, url_for, session
 from twilio.rest import Client
 
-from user import User
+from models.user import UserModel
+from models.log import LogModel
+from db import db
 from twilio_credentials import TWILIO_AUTH_TOKEN, TWILIO_ACCOUNT_SID
 
 
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.secret_key = "secret"
 generateotp_url = "https://api.generateotp.com/"
+
+
+@app.before_first_request
+def create_table():
+    db.create_all()
 
 
 @app.route("/", methods=['GET', 'POST'])
@@ -38,19 +47,13 @@ def home():
     username = request.form['username']
     password = request.form['password']
 
-    user = User.find_by_username(username)
+    user = UserModel.find_by_username(username)
 
     if user:  # user exists
         if password == user.password:
             # password correct
-            connection = sqlite3.connect('data.db')
-            cursor = connection.cursor()
-
-            query = "INSERT INTO logs VALUES(?,?,?,?,?, NULL)"
-            cursor.execute(query, (user.username, ip, latitude, longitude, time))
-
-            connection.commit()
-            connection.close()
+            log = LogModel(username, ip, latitude, longitude, time, None)
+            log.save_to_db()
 
             # ---- checking for safe zone -----
             if safe_zone():
@@ -108,7 +111,7 @@ def show_register_page():
         session['time'] = time
         session['ip'] = ip
 
-        if User.find_by_username(username):
+        if UserModel.find_by_username(username):
             return render_template('register.html', info="Username already taken!")
 
         # -------- OTP VERIFICATION ---------
@@ -130,7 +133,7 @@ def validate():
     isValid = validate_otp(input_otp, phone_number)
 
     if isValid:
-        save_to_db()
+        save_data_to_db()
         return redirect(url_for('success'))
     info = "Invalid OTP. Please try again."
     return render_template('validate.html', info=info, phone_number=session['phone_number'])  # redirects to the same url u r in
@@ -184,7 +187,7 @@ def validate_otp(otp_code, phone_number):
         return data['status']
 
 
-def save_to_db():
+def save_data_to_db():
     phone_number = session['phone_number']
     username = session['username']
     password = session['password']
@@ -193,23 +196,17 @@ def save_to_db():
     time = session['time']
     ip = session['ip']
 
-    connection = sqlite3.connect('data.db')
-    cursor = connection.cursor()
+    new_user = UserModel(username, password, phone_number, None, None, None, None, None)
+    new_user.save_to_db()
 
-    query = "INSERT INTO users VALUES (NULL, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)"
-    cursor.execute(query, (username, password, phone_number))
-
-    query = "INSERT INTO logs VALUES (?,?,?,?, ?, NULL)"
-    cursor.execute(query, (username, ip, latitude, longitude, time))
-
-    connection.commit()
-    connection.close()
-
-    return redirect(url_for('success'))
+    log = LogModel(username, ip, latitude, longitude, time, None)
+    log.save_to_db()
 
 
 def safe_zone():
-    return True
+    return False
 
 
-app.run(port=5000, debug=True)
+if __name__ == '__main__':
+    db.init_app(app)
+    app.run(port=5000, debug=True)
