@@ -7,7 +7,7 @@ from twilio.rest import Client
 from models.user import UserModel
 from models.log import LogModel
 from db import db
-from twilio_credentials import TWILIO_AUTH_TOKEN, TWILIO_ACCOUNT_SID
+from twilio_credentials import TWILIO_AUTH_TOKEN, TWILIO_ACCOUNT_SID, SENDER_PHONE_NUMBER
 
 
 app = Flask(__name__)
@@ -163,7 +163,7 @@ def send_otp(phone_number, otp_code):
     try:
         message = client.messages.create(
             to=f"+91{phone_number}",
-            from_="+17403278815",
+            from_=SENDER_PHONE_NUMBER,
             body=f"Your OTP is {otp_code}")
 
         print(message.sid)
