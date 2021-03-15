@@ -2,6 +2,3 @@ __pycache__/
 *.pyc
 rough.py
 twilio_credentials.py
-*.db
-Pipfile
-Pipfile.lock
