@@ -28,11 +28,6 @@ class LogModel(db.Model):
             'time_start': self.time_start, 'time_end': self.time_end
             }
 
-    @classmethod
-    def find_log(cls, username, time_start):
-        return cls.query.filter_by(username=username).filter_by(time_start=time_start).first()
-
-
     # adds itself to the DB
     def save_to_db(self):
         db.session.add(self)
