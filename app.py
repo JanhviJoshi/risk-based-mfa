@@ -1,126 +1,242 @@
-import json, sqlite3
+import json
 import requests
+import datetime
 
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, redirect, make_response, render_template, request, url_for, session
+from flask_jwt_extended import (
+    JWTManager, jwt_required, get_jwt_identity, create_access_token, create_refresh_token,
+    set_access_cookies, set_refresh_cookies, unset_jwt_cookies, unset_access_cookies
+)
+from werkzeug.security import generate_password_hash, check_password_hash
 from twilio.rest import Client
 
 from models.user import UserModel
 from models.log import LogModel
+from twilio_credentials import TWILIO_AUTH_TOKEN, TWILIO_ACCOUNT_SID, SENDER_PHONE_NUMBER
 from db import db
-from twilio_credentials import TWILIO_AUTH_TOKEN, TWILIO_ACCOUNT_SID
-
 
 app = Flask(__name__)
+
+# configuration settings
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.secret_key = "secret"
-generateotp_url = "https://api.generateotp.com/"
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # we don't want Flask's modification tracker
+app.config['JWT_SECRET_KEY'] = 'mfa-super-secret-key'  # Needs to be super complicated!
+app.config['JWT_TOKEN_LOCATION'] = ['cookies']
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = datetime.timedelta(seconds=150)
+app.config['JWT_COOKIE_CSRF_PROTECT'] = True  # prevents Cross-Site Request Forgery(CSRF) attack
+app.config['JWT_CSRF_CHECK_FORM'] = True
+app.config['OTP_GENERATION_URL'] = "https://api.generateotp.com/"
+app.secret_key = "veryVERYsecret"
+
+jwt = JWTManager(app)
 
 
+# loaders go here
+# creates table before any command execution
 @app.before_first_request
 def create_table():
     db.create_all()
 
 
-@app.route("/", methods=['GET', 'POST'])
+# called when NO access tokens are provided
+@jwt.unauthorized_loader
+def unauthorized_callback(error):
+    # No auth header
+    print("Unauthorized Token Loaded!!")
+    # return redirect(app.config['BASE_URL'] + '/', 302)
+    return redirect(url_for("home"))
+
+
+# called when wrong tokens are provided
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+    # Invalid Fresh/Non-Fresh Access token in auth header
+    print("Invalid Token Loaded!!")
+    resp = make_response(redirect(url_for("home")))
+    unset_jwt_cookies(resp)
+    resp.set_cookie('username', max_age=0)
+    return resp, 302
+
+
+# called when expired access token is provided
+@jwt.expired_token_loader
+def expired_token_callback(header, payload):
+    # Expired auth header
+    print("Expired Token Loaded!!")
+    resp = make_response(redirect(url_for("refresh")))
+    unset_access_cookies(resp)
+    return resp, 302
+
+
+# refreshes the access token
+@app.route('/token/refresh', methods=['GET'])
+@jwt_required(refresh=True)
+def refresh():
+    # Refreshing expired Access token
+    user_id = get_jwt_identity()
+    access_token = create_access_token(identity=str(user_id))
+    resp = make_response(redirect(url_for("home")))
+    set_access_cookies(resp, access_token)
+    return resp
+
+
+# assigns access & refresh tokens and stores in cookies
+def assign_access_refresh_tokens(user_id, url):
+    access_token = create_access_token(identity=str(user_id), fresh=True)
+    refresh_token = create_refresh_token(identity=str(user_id))
+    resp = make_response(redirect(url, 302))
+    set_access_cookies(resp, access_token)
+    set_refresh_cookies(resp, refresh_token)
+    # resp.set_cookie('username', str(user_id))
+    return resp
+
+
+# deletes the access and refresh token from cookies
+def unset_jwt():
+    resp = make_response(redirect(url_for("home")))
+    resp.set_cookie('locationData', max_age=0)
+    unset_jwt_cookies(resp)
+    return resp
+
+
+# homepage: displayed at beginning
+@app.route("/")
+@jwt_required(optional=True)
 def home():
+    username = get_jwt_identity()
+    if not username:
+        return render_template("login.html")
+    else:
+        return render_template("success.html")
+
+
+# route for login of user
+@app.route("/login", methods=['GET', 'POST'])
+def login():
     if request.method == "GET":
         return render_template("login.html")  # showing the login page
 
-    # fetching location of user
-    raw_data = request.cookies.get('locationData')
-    try:
-        location_data = json.loads(raw_data)
-    except:
-        return render_template("login.html", info="Location access denied. Please enable location to continue...")
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
 
-    latitude = location_data['latitude']
-    longitude = location_data['longitude']
-    time = location_data['time']
+        user = UserModel.find_by_username(username)
+        if user:
+            if check_password_hash(user.password, password):
+                # storing in session; to be stored in db only if otp valid
+                session['username'] = username
+                session['password'] = password
+                session['phone_number'] = user.phone_number
+                # if password is correct
+                raw_data = request.cookies.get('locationData')
+                # fetching location of user
+                try:
+                    location = json.loads(raw_data)
+                except:
+                    return render_template("error_page.html")
+                # fetching IP of user
+                if request.environ.get('HTTP_X_FORWARDED_FOR') is None:
+                    session['ip'] = request.environ['REMOTE_ADDR']
+                else:
+                    session['ip'] = request.environ['HTTP_X_FORWARDED_FOR']
 
-    # fetching ip of user
-    if request.environ.get('HTTP_X_FORWARDED_FOR') is None:
-        ip = request.environ['REMOTE_ADDR']
-    else:
-        ip = request.environ['HTTP_X_FORWARDED_FOR']
+                session['latitude'] = location['latitude']
+                session['longitude'] = location['longitude']
+                session['time'] = location['time']
 
-    username = request.form['username']
-    password = request.form['password']
+                # --- printing for convenience ---
+                # print(f"IP Address: {session['ip']}")
+                # print(f"Latitude : {latitude}")
+                # print(f"Longitude : {longitude}")
+                # print(f"Time : {time}")
+                # --- could be deleted up to here---
 
-    user = UserModel.find_by_username(username)
+                # ---- checking for safe zone -----
+                if safe_zone():
+                    return redirect(url_for('success'))
 
-    if user:  # user exists
-        if password == user.password:
-            # password correct
-            log = LogModel(username, ip, latitude, longitude, time, None)
-            log.save_to_db()
-
-            # ---- checking for safe zone -----
-            if safe_zone():
-                return redirect(url_for('success'))
-
-            # ---- not in safe zone ----
-            # ---- OTP verification ----
-            otp_code = request_otp(user.phone_number)  # requesting for generation of otp from third party api
-            msg = send_otp(user.phone_number, otp_code)  # sending otp to given number via message
-            if msg:  # invalid phone number
-                # error = msg
-                return render_template('register.html', info="Invalid Phone Number. Please enter valid phone number.")
-            # valid number
-            return redirect(url_for('validate', phone_number=user.phone_number))
-
-        else:  # wrong password
-            return render_template('login.html', info="ERROR: Wrong Password. Please try again")
-    else:  # user not registered
-        return render_template('login.html', info="You are not a registered user. Please sign up to continue.")
+                otp_code = request_otp(user.phone_number)  # requesting for generation of otp from third party api
+                msg = send_otp(user.phone_number, otp_code)  # sending otp to given number via message
+                if msg:  # invalid phone number
+                    # error = msg
+                    return render_template('register.html',
+                                           info="Invalid Phone Number. Please enter valid phone number.")
+                # valid number
+                return redirect(url_for('validate', phone_number=user.phone_number))
+            else:
+                return render_template("login.html", info="** Wrong Password...")
+        else:
+            return render_template("login.html", info="** You are not a registered user. Please Sign Up to continue...")
 
 
 @app.route("/register", methods=['GET', 'POST'])
-def show_register_page():
+def register():
     if request.method == "GET":
         return render_template("register.html")
 
     # ----- fetching location of user -----
     raw_data = request.cookies.get('locationData')
     try:
-        location_data = json.loads(raw_data)
+        location = json.loads(raw_data)
     except:
         return render_template("register.html", info="Location access denied. Please enable location to continue...")
 
-    latitude = location_data['latitude']
-    longitude = location_data['longitude']
-    time = location_data['time']
-
-    # ----- fetching ip of user -----
     if request.environ.get('HTTP_X_FORWARDED_FOR') is None:
-        ip = request.environ['REMOTE_ADDR']
+        session['ip'] = request.environ['REMOTE_ADDR']
     else:
-        ip = request.environ['HTTP_X_FORWARDED_FOR']
+        session['ip'] = request.environ['HTTP_X_FORWARDED_FOR']
+
+    session['latitude'] = location['latitude']
+    session['longitude'] = location['longitude']
+    session['time'] = location['time']
 
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        phone_number = request.form['phno']
+        session['username'] = request.form['username']
+        session['password'] = request.form['password']
+        session['phone_number'] = request.form['phone_number']
 
-        # storing in session; to be stored in db only if otp valid
-        session['phone_number'] = phone_number
-        session['username'] = username
-        session['password'] = password
-        session['longitude'] = longitude
-        session['latitude'] = latitude
-        session['time'] = time
-        session['ip'] = ip
-
-        if UserModel.find_by_username(username):
-            return render_template('register.html', info="Username already taken!")
+        if UserModel.find_by_username(session['username']):
+            return render_template("register.html", info="Username already taken. Please try a new username...")
 
         # -------- OTP VERIFICATION ---------
-        otp_code = request_otp(phone_number)  # requesting for generation of otp from third party api
-        msg = send_otp(phone_number, otp_code)  # sending otp to given number via message
+        otp_code = request_otp(session['phone_number'])  # requesting for generation of otp from third party api
+        msg = send_otp(session['phone_number'], otp_code)  # sending otp to given number via message
         if msg:  # invalid phone number
             return render_template('register.html', info="Invalid Phone Number. Please enter valid phone number.")
+        # print(f"Username: {username}")
+        # print(f"Password: {password}")
+        # print(f"Mobile Number: {phone_number}")  # apply all checks in html file
+        # print(f"IP Address: {ip}")
+        # print(f"Latitude : {latitude}")
+        # print(f"Longitude : {longitude}")
+        # print(f"Time : {time}")
         # valid number
         return redirect(url_for('validate'))
+
+
+@app.route("/success")
+@jwt_required()
+def success():
+    return render_template("success.html")
+
+
+@app.route('/logout')
+@jwt_required()
+def logout():
+    # Revoke Fresh/Non-fresh Access and Refresh tokens
+    try:
+        logout_log = LogModel.find_log(session['username'], session['time'])
+    except:
+        return unset_jwt(), 302
+    logout_log.time_end = str(datetime.datetime.now().time())[:5]
+    logout_log.save_to_db()
+
+    return unset_jwt(), 302
+
+
+@app.route('/user-logs')
+def user_logs():
+    return {'users': [user.json() for user in UserModel.query.all()]}
 
 
 @app.route("/validate", methods=['GET', 'POST'])
@@ -130,23 +246,22 @@ def validate():
 
     input_otp = request.form['otp_code']
     phone_number = session['phone_number']
-    isValid = validate_otp(input_otp, phone_number)
+    is_valid = validate_otp(input_otp, phone_number)
 
-    if isValid:
+    if is_valid:
         save_data_to_db()
-        return redirect(url_for('success'))
+        return assign_access_refresh_tokens(session['username'], url_for("success"))
     info = "Invalid OTP. Please try again."
     return render_template('validate.html', info=info, phone_number=session['phone_number'])  # redirects to the same url u r in
 
 
-@app.route("/success")
-def success():  # opens the home page on success of entry
-    return render_template('success.html')
+def safe_zone():
+    return False
 
 
 def request_otp(phone_number):
     print("inside request_otp")
-    req = requests.post(f"{generateotp_url}/generate", data={"initiator_id": phone_number})
+    req = requests.post(f"{app.config['OTP_GENERATION_URL']}/generate", data={"initiator_id": phone_number})
 
     if req.status_code == 201:
         # OK
@@ -163,7 +278,7 @@ def send_otp(phone_number, otp_code):
     try:
         message = client.messages.create(
             to=f"+91{phone_number}",
-            from_="+17403278815",
+            from_=SENDER_PHONE_NUMBER,
             body=f"Your OTP is {otp_code}")
 
         print(message.sid)
@@ -174,7 +289,7 @@ def send_otp(phone_number, otp_code):
 
 
 def validate_otp(otp_code, phone_number):
-    req = requests.post(f"{generateotp_url}/validate/{otp_code}/{phone_number}")
+    req = requests.post(f"{app.config['OTP_GENERATION_URL']}/validate/{otp_code}/{phone_number}")
     print(f"code: {req.status_code}")
     # data = req.json()
     # print(data['message'])
@@ -188,23 +303,26 @@ def validate_otp(otp_code, phone_number):
 
 
 def save_data_to_db():
-    phone_number = session['phone_number']
-    username = session['username']
-    password = session['password']
-    longitude = session['longitude']
-    latitude = session['latitude']
-    time = session['time']
-    ip = session['ip']
+    # phone_number = session['phone_number']
+    # username = session['username']
+    # password = session['password']
+    # longitude = session['longitude']
+    # latitude = session['latitude']
+    # time = session['time']
+    # ip = session['ip']
 
-    new_user = UserModel(username, password, phone_number, None, None, None, None, None)
-    new_user.save_to_db()
+    if not UserModel.find_by_username(session['username']):
+        new_user = UserModel(
+            session['username'], generate_password_hash(session['password']), session['phone_number'],
+            None, None, None, None, None
+        )
+        new_user.save_to_db()
 
-    log = LogModel(username, ip, latitude, longitude, time, None)
+    log = LogModel(
+        session['username'], session['ip'], session['latitude'],
+        session['longitude'], session['time'], None
+    )
     log.save_to_db()
-
-
-def safe_zone():
-    return False
 
 
 if __name__ == '__main__':
