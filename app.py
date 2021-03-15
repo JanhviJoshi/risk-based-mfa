@@ -7,6 +7,7 @@ from flask_jwt_extended import (
     JWTManager, jwt_required, get_jwt_identity, create_access_token, create_refresh_token,
     set_access_cookies, set_refresh_cookies, unset_jwt_cookies, unset_access_cookies
 )
+from werkzeug.security import generate_password_hash, check_password_hash
 from twilio.rest import Client
 
 from models.user import UserModel
@@ -17,7 +18,6 @@ from db import db
 app = Flask(__name__)
 
 # configuration settings
-app.config['BASE_URL'] = 'http://127.0.0.1:5000'  # Running on localhost
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # we don't want Flask's modification tracker
 app.config['JWT_SECRET_KEY'] = 'mfa-super-secret-key'  # Needs to be super complicated!
@@ -25,7 +25,7 @@ app.config['JWT_TOKEN_LOCATION'] = ['cookies']
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = datetime.timedelta(seconds=150)
 app.config['JWT_COOKIE_CSRF_PROTECT'] = True  # prevents Cross-Site Request Forgery(CSRF) attack
 app.config['JWT_CSRF_CHECK_FORM'] = True
-generateotp_url = "https://api.generateotp.com/"
+app.config['OTP_GENERATION_URL'] = "https://api.generateotp.com/"
 app.secret_key = "veryVERYsecret"
 
 jwt = JWTManager(app)
@@ -94,7 +94,7 @@ def assign_access_refresh_tokens(user_id, url):
 # deletes the access and refresh token from cookies
 def unset_jwt():
     resp = make_response(redirect(url_for("home")))
-    resp.set_cookie('username', max_age=0)
+    resp.set_cookie('locationData', max_age=0)
     unset_jwt_cookies(resp)
     return resp
 
@@ -122,7 +122,7 @@ def login():
 
         user = UserModel.find_by_username(username)
         if user:
-            if password == user.password:
+            if check_password_hash(user.password, password):
                 # storing in session; to be stored in db only if otp valid
                 session['username'] = username
                 session['password'] = password
@@ -261,7 +261,7 @@ def safe_zone():
 
 def request_otp(phone_number):
     print("inside request_otp")
-    req = requests.post(f"{generateotp_url}/generate", data={"initiator_id": phone_number})
+    req = requests.post(f"{app.config['OTP_GENERATION_URL']}/generate", data={"initiator_id": phone_number})
 
     if req.status_code == 201:
         # OK
@@ -289,7 +289,7 @@ def send_otp(phone_number, otp_code):
 
 
 def validate_otp(otp_code, phone_number):
-    req = requests.post(f"{generateotp_url}/validate/{otp_code}/{phone_number}")
+    req = requests.post(f"{app.config['OTP_GENERATION_URL']}/validate/{otp_code}/{phone_number}")
     print(f"code: {req.status_code}")
     # data = req.json()
     # print(data['message'])
@@ -313,7 +313,7 @@ def save_data_to_db():
 
     if not UserModel.find_by_username(session['username']):
         new_user = UserModel(
-            session['username'], session['password'], session['phone_number'],
+            session['username'], generate_password_hash(session['password']), session['phone_number'],
             None, None, None, None, None
         )
         new_user.save_to_db()
