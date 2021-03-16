@@ -26,12 +26,12 @@ class LogModel(db.Model):
         return {
             'username': self.username, 'ip': self.ip, 'latitude': self.latitude, 'longitude': self.longitude,
             'time_start': self.time_start, 'time_end': self.time_end
-            }
+        }
 
     @classmethod
     def find_log(cls, username, time_start):
-        return cls.query.filter_by(username=username).filter_by(time_start=time_start).first()
-
+        # return cls.query.filter_by(username=username).filter_by(time_start=time_start).first()
+        return cls.query.filter_by(username=username).filter_by(time_start=time_start).all()
 
     # adds itself to the DB
     def save_to_db(self):
@@ -42,4 +42,3 @@ class LogModel(db.Model):
     def delete_from_db(self):
         db.session.delete(self)
         db.session.commit()
-

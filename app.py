@@ -19,14 +19,14 @@ app = Flask(__name__)
 
 # configuration settings
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # we don't want Flask's modification tracker
-app.config['JWT_SECRET_KEY'] = 'mfa-super-secret-key'  # Needs to be super complicated!
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False        # we don't want Flask's modification tracker
+app.config['JWT_SECRET_KEY'] = 'mfa-super-secret-key'       # Needs to be super complicated!
 app.config['JWT_TOKEN_LOCATION'] = ['cookies']
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = datetime.timedelta(seconds=150)
-app.config['JWT_COOKIE_CSRF_PROTECT'] = True  # prevents Cross-Site Request Forgery(CSRF) attack
+app.config['JWT_COOKIE_CSRF_PROTECT'] = True                # prevents Cross-Site Request Forgery(CSRF) attack
 app.config['JWT_CSRF_CHECK_FORM'] = True
 app.config['OTP_GENERATION_URL'] = "https://api.generateotp.com/"
-app.secret_key = "veryVERYsecret"
+app.secret_key = "veryVERYsecret"                           # Needs to be super complicated!
 
 jwt = JWTManager(app)
 
@@ -41,7 +41,7 @@ def create_table():
 # called when NO access tokens are provided
 @jwt.unauthorized_loader
 def unauthorized_callback(error):
-    # No auth header
+    """no auth header provided"""
     print("Unauthorized Token Loaded!!")
     # return redirect(app.config['BASE_URL'] + '/', 302)
     return redirect(url_for("home"))
@@ -50,7 +50,7 @@ def unauthorized_callback(error):
 # called when wrong tokens are provided
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
-    # Invalid Fresh/Non-Fresh Access token in auth header
+    """Invalid Fresh/Non-Fresh Access token in auth header"""
     print("Invalid Token Loaded!!")
     resp = make_response(redirect(url_for("home")))
     unset_jwt_cookies(resp)
@@ -61,7 +61,7 @@ def invalid_token_callback(error):
 # called when expired access token is provided
 @jwt.expired_token_loader
 def expired_token_callback(header, payload):
-    # Expired auth header
+    """Expired auth header"""
     print("Expired Token Loaded!!")
     resp = make_response(redirect(url_for("refresh")))
     unset_access_cookies(resp)
@@ -72,7 +72,7 @@ def expired_token_callback(header, payload):
 @app.route('/token/refresh', methods=['GET'])
 @jwt_required(refresh=True)
 def refresh():
-    # Refreshing expired Access token
+    """Refreshing expired Access token"""
     user_id = get_jwt_identity()
     access_token = create_access_token(identity=str(user_id))
     resp = make_response(redirect(url_for("home")))
@@ -80,8 +80,8 @@ def refresh():
     return resp
 
 
-# assigns access & refresh tokens and stores in cookies
 def assign_access_refresh_tokens(user_id, url):
+    """assigns access & refresh tokens and stores in cookies"""
     access_token = create_access_token(identity=str(user_id), fresh=True)
     refresh_token = create_refresh_token(identity=str(user_id))
     resp = make_response(redirect(url, 302))
@@ -91,8 +91,8 @@ def assign_access_refresh_tokens(user_id, url):
     return resp
 
 
-# deletes the access and refresh token from cookies
 def unset_jwt():
+    """deletes the access and refresh token from cookies"""
     resp = make_response(redirect(url_for("home")))
     resp.set_cookie('locationData', max_age=0)
     unset_jwt_cookies(resp)
@@ -110,14 +110,14 @@ def home():
         return render_template("success.html")
 
 
-# route for login of user
 @app.route("/login", methods=['GET', 'POST'])
 def login():
+    """route for login of user"""
     if request.method == "GET":
-        return render_template("login.html")  # showing the login page
+        return render_template("login.html")            # showing the login page
 
     if request.method == 'POST':
-        username = request.form['username']
+        username = request.form['username']             # fetching data from html page
         password = request.form['password']
 
         user = UserModel.find_by_username(username)
@@ -153,15 +153,17 @@ def login():
 
                 # ---- checking for safe zone -----
                 if safe_zone():
-                    return redirect(url_for('success'))
+                    save_data_to_db()
+                    return assign_access_refresh_tokens(session['username'], url_for("success"))
 
+                # -------- OTP VERIFICATION ---------
                 otp_code = request_otp(user.phone_number)  # requesting for generation of otp from third party api
                 msg = send_otp(user.phone_number, otp_code)  # sending otp to given number via message
                 if msg:  # invalid phone number
                     # error = msg
                     return render_template('register.html',
                                            info="Invalid Phone Number. Please enter valid phone number.")
-                # valid number
+                # if valid phone number
                 return redirect(url_for('validate', phone_number=user.phone_number))
             else:
                 return render_template("login.html", info="** Wrong Password...")
@@ -203,6 +205,7 @@ def register():
         msg = send_otp(session['phone_number'], otp_code)  # sending otp to given number via message
         if msg:  # invalid phone number
             return render_template('register.html', info="Invalid Phone Number. Please enter valid phone number.")
+
         # print(f"Username: {username}")
         # print(f"Password: {password}")
         # print(f"Mobile Number: {phone_number}")  # apply all checks in html file
@@ -210,6 +213,7 @@ def register():
         # print(f"Latitude : {latitude}")
         # print(f"Longitude : {longitude}")
         # print(f"Time : {time}")
+
         # valid number
         return redirect(url_for('validate'))
 
@@ -223,13 +227,13 @@ def success():
 @app.route('/logout')
 @jwt_required()
 def logout():
-    # Revoke Fresh/Non-fresh Access and Refresh tokens
     try:
-        logout_log = LogModel.find_log(session['username'], session['time'])
+        log_entries = LogModel.find_log(session['username'], session['time'])
     except:
         return unset_jwt(), 302
-    logout_log.time_end = str(datetime.datetime.now().time())[:5]
-    logout_log.save_to_db()
+    for logout_log in log_entries:
+        logout_log.time_end = str(datetime.datetime.now().time())[:5]
+        logout_log.save_to_db()
 
     return unset_jwt(), 302
 
@@ -256,7 +260,7 @@ def validate():
 
 
 def safe_zone():
-    return False
+    return True
 
 
 def request_otp(phone_number):
@@ -303,14 +307,7 @@ def validate_otp(otp_code, phone_number):
 
 
 def save_data_to_db():
-    # phone_number = session['phone_number']
-    # username = session['username']
-    # password = session['password']
-    # longitude = session['longitude']
-    # latitude = session['latitude']
-    # time = session['time']
-    # ip = session['ip']
-
+    """function to interact with database"""
     if not UserModel.find_by_username(session['username']):
         new_user = UserModel(
             session['username'], generate_password_hash(session['password']), session['phone_number'],
