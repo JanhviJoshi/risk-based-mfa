@@ -30,6 +30,26 @@
           right: 16px;
         }
 
+        .logout-button{
+            position: absolute;
+            top: 0;
+            right: 10px;
+            background-color: #f44336; /* Red Colour */
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+        }
+
+        .logout-button:hover{
+            background-color: #8b0000;
+        }
+
         .middle {
           position: absolute;
           top: 50%;
@@ -43,13 +63,13 @@
           width: 40%;
         }
     </style>
-    <meta charset="UTF-8">
+    <meta charset="UTF-8" http-equiv="refresh" content="30">
     <title>Welcome Page</title>
 </head>
 <body>
     <div class="bgimg">
         <div class="topleft">
-            <p>WELCOME TO OUR WEBSITE</p>
+            <p>WELCOME TO OUR PROJECT</p>
         </div>
         <div class="middle">
             <h1>RISK BASED MULTI-FACTOR AUTHENTICATION</h1>
@@ -64,6 +84,12 @@
                 document.getElementById("datetime").innerHTML = (("0"+dt.getDate()).slice(-2)) +"/"+ (("0"+(dt.getMonth()+1)).slice(-2)) +"/"+ (dt.getFullYear()) +"  "+ (("0"+dt.getHours()).slice(-2)) +":"+ (("0"+dt.getMinutes()).slice(-2));
             </script>
         </div>
+
+        <form action="/logout" method="GET">
+            <button type="submit" class="logout-button"> Logout </button>
+        </form>
     </div>
+
+
 </body>
 </html>
