@@ -260,8 +260,20 @@ def validate():
     return render_template('validate.html', info=info, phone_number=session['phone_number'])  # redirects to the same url u r in
 
 
+@app.route("/resend")
+def resend():
+    otp_code = request_otp(session['phone_number'])  # requesting for generation of otp from third party api
+    msg = send_otp(session['phone_number'], otp_code)  # sending otp to given number via message
+    if msg:  # invalid phone number
+        # error = msg
+        return render_template('register.html',
+                               info="Invalid Phone Number. Please enter valid phone number.")
+    # valid number
+    return redirect(url_for('validate', phone_number=session['phone_number']))
+
+
 def safe_zone():
-    return True
+    return False
 
 
 def request_otp(phone_number):
